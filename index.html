@@ -693,16 +693,20 @@
       backdrop-filter: blur(6px);
       display: none;
       justify-content: center;
-      align-items: flex-end;
+      align-items: center;
+      padding: 16px;
       z-index: 100;
     }
     .modal-sheet {
       background: #151d2f;
       width: 100%;
       max-width: 500px;
-      border-radius: 20px 20px 0 0;
+      border-radius: 20px;
       padding: 20px;
-      border-top: 1px solid rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
+      overflow-y: auto;
     }
     .modal-sheet h2 { font-size: 1.05rem; margin-bottom: 12px; color: var(--accent); }
     .fg { margin-bottom: 12px; }
@@ -750,6 +754,23 @@
       .top-controls { gap: 8px; }
     }
 
+
+    /* Botón "＋ Añadir furgoneta" (antes este estilo estaba por error dentro del PDF y no se aplicaba) */
+    .van-add-btn { border: 1px dashed var(--accent) !important; background: transparent !important; color: var(--accent) !important; font-weight: 700; }
+    .van-add-btn:hover { background: var(--accent-glow) !important; }
+
+    /* Número en gris mientras el toque se está guardando en el servidor */
+    .qty-box.guardando .qty-val { opacity: 0.55; }
+
+    .mov-ajuste { color: var(--mio-color); }
+
+    /* Aviso flotante (errores al guardar sin bloquear la pantalla) */
+    .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%) translateY(20px); max-width: min(92vw, 420px);
+      background: #1e293b; color: var(--text-main); border: 1px solid var(--warn-border); border-radius: 10px; padding: 10px 14px;
+      font-size: 0.82rem; box-shadow: 0 8px 24px rgba(0,0,0,0.4); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 9999; }
+    .toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    .autoria { text-align: center; font-size: 0.6rem; color: var(--text-muted); opacity: 0.45; padding: 18px 10px 90px; }
   </style>
 </head>
 <body>
@@ -833,6 +854,8 @@
     <!-- Grid Adaptable -->
     <div id="itemsContainer" class="grid-container"></div>
   </div>
+
+  <footer class="autoria">© 2026 David Villa. Todos los derechos reservados. Prohibida su copia o uso sin autorización.</footer>
 
   <div id="bottomBar" class="bottom-bar">
     <button id="btnAddBottom" class="btn-action-add" onclick="openAddModal()">➕ Añadir Material Consumible</button>
@@ -983,7 +1006,7 @@
       </div>
       <div class="fg">
         <label>Contraseña</label>
-        <input type="password" id="loginPassword" autocomplete="current-password">
+        <input type="password" id="loginPassword" autocomplete="current-password" onkeydown="if (event.key === 'Enter') iniciarSesion()">
       </div>
       <p id="loginError" style="color:#f87171; font-size:0.78rem; display:none; margin-bottom:8px;"></p>
       <div class="modal-btns">
@@ -1001,6 +1024,41 @@
     const SUPABASE_URL = "https://bechbjblvkosdmbmhqhs.supabase.co";
     const SUPABASE_ANON_KEY = "sb_publishable_udJhbUxIcPs2jgTrjAhc2w_ijxP-8k_";
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ----- Utilidades -----
+    // Escapa texto antes de meterlo en HTML: un nombre con comillas, < o & ya no rompe la tarjeta.
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    // Aviso flotante que no bloquea la pantalla (para errores al sumar/restar rápido).
+    let toastTimer = null;
+    function toast(msg) {
+      let el = document.getElementById("toast");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "toast";
+        el.className = "toast";
+        document.body.appendChild(el);
+      }
+      el.textContent = msg;
+      el.classList.add("visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove("visible"), 3500);
+    }
+
+    // Agrupa varios repintados seguidos en uno solo.
+    let renderPendiente = false;
+    function programarRender() {
+      if (renderPendiente) return;
+      renderPendiente = true;
+      requestAnimationFrame(() => { renderPendiente = false; render(); });
+    }
+
+    // Cantidad que se ve en pantalla: lo confirmado por el servidor + toques aún en camino.
+    function qtyDe(item) {
+      return item.qty + (item.pend || 0);
+    }
 
     async function comprobarSesion() {
       const { data } = await supabaseClient.auth.getSession();
@@ -1170,12 +1228,13 @@
     let currentSub = 'all';
     let searchQuery = '';
 
-    // ----- Furgonetas: empezamos con Almacén + 4 furgonetas visibles -----
-    // Los IDs de Supabase se conservan como furgo_id. Las antiguas 5, 6 y 7
-    // dejan de mostrarse, pero no borramos sus datos para no romper historiales.
+    // ----- Furgonetas -----
+    // Los IDs de Supabase se conservan como furgo_id. Las antiguas 4, 5, 6 y 7 no se
+    // muestran, pero no borramos sus datos para no romper historiales. Cualquier
+    // furgoneta creada después (con "＋ Añadir furgoneta") sí aparece.
     const FURGO_SELECTED_KEY = "teleco_furgo_selected_v2";
-    const MAX_FURGOS_INICIALES = 4; // 0 = almacén + 1..3 (David, Hernando, Edu)
-    const IDS_FURGOS_VISIBLES = new Set([0, 1, 2, 3]);
+    const MAX_FURGOS_INICIALES = 4; // 0 = almacén + 1..3
+    const IDS_FURGOS_OCULTAS = new Set([4, 5, 6, 7]);
     let furgonetas = [];
     let vanIds = [];
     let currentFurgoIndex = 0;
@@ -1200,11 +1259,7 @@
         return;
       }
 
-      // Solo mostramos el almacén (id 0) y las primeras 4 furgonetas (ids 1-4).
-      // Las antiguas 5, 6 y 7 quedan fuera de la interfaz sin borrar información.
-      // IMPORTANTE: solo se muestran Almacén (0) + furgonetas 1, 2, 3 y 4.
-      // Las 5, 6, 7 y cualquier otra posterior quedan fuera de la interfaz.
-      data.filter(f => IDS_FURGOS_VISIBLES.has(Number(f.id))) .forEach(f => {
+      data.filter(f => !IDS_FURGOS_OCULTAS.has(Number(f.id))).forEach(f => {
         furgonetas[Number(f.id)] = f.nombre;
         vanIds.push(Number(f.id));
       });
@@ -1282,9 +1337,7 @@
       currentFurgoIndex = nuevoId;
       localStorage.setItem(FURGO_SELECTED_KEY, String(currentFurgoIndex));
 
-      await loadItemsForCurrentFurgo();
-      await loadHerramientasForCurrentFurgo();
-      await loadMioForCurrentFurgo();
+      await cargarFurgoActual();
       actualizarControlesEscritura();
       renderVanTabs();
       updateHeaderForFurgo();
@@ -1292,26 +1345,47 @@
       alert(`Furgoneta "${furgo.nombre}" creada con ${plantilla?.length || 0} materiales a 0.`);
     }
 
-    async function loadItemsForCurrentFurgo() {
+    // Carga de una vez todo el material activo de la furgoneta/almacén actual
+    // (consumibles, herramientas y material mío). Reutiliza los objetos que ya había
+    // en pantalla para no perder los toques de +/− que todavía se están guardando.
+    let cargaSeq = 0;
+    async function cargarFurgoActual() {
+      const furgo = currentFurgoIndex;
+      const seq = ++cargaSeq;
       const { data, error } = await supabaseClient
         .from("materiales")
-        .select("*")
-        .eq("furgo_id", currentFurgoIndex)
-        .eq("tipo", "consumible")
+        .select("id, tipo, nombre, categoria, cantidad, minimo")
+        .eq("furgo_id", furgo)
         .eq("activo", true)
         .order("id");
+      if (seq !== cargaSeq || furgo !== currentFurgoIndex) return; // llegó tarde: hay una carga más nueva
       if (error) {
-        alert("Error cargando consumibles de Supabase: " + error.message);
-        items = [];
+        toast("Error cargando el material: " + error.message);
         return;
       }
-      items = data.map(row => ({ id: row.id, name: row.nombre, cat: row.categoria, qty: row.cantidad, min: row.minimo }));
+
+      const previos = new Map();
+      [...items, ...materialEstandar, ...materialMio].forEach(o => previos.set(o.id, o));
+      const reutilizar = (row, extra) => {
+        const o = previos.get(row.id) || { id: row.id, pend: 0 };
+        o.name = row.nombre;
+        if (!o.pend) o.qty = Number(row.cantidad) || 0; // con toques en camino manda la respuesta del servidor
+        Object.assign(o, extra);
+        return o;
+      };
+
+      items = [];
+      materialEstandar = [];
+      materialMio = [];
+      data.forEach(row => {
+        if (row.tipo === "consumible") items.push(reutilizar(row, { cat: row.categoria, min: Number(row.minimo) || 0 }));
+        else if (row.tipo === "herramienta") materialEstandar.push(reutilizar(row, {}));
+        else if (row.tipo === "mio") materialMio.push(reutilizar(row, {}));
+      });
     }
 
-    // ----- Herramientas (antes "Estándar") y Material Mío: editables, con lista independiente por furgoneta -----
-    // Copia de seguridad completa: vuelca TODO lo que hay en localStorage (las 7 furgonetas,
-    // sus consumibles/herramientas/mío, movimientos, papelera y las familias) a un único
-    // archivo .json descargable. Es la red de seguridad antes de mover algo a Supabase.
+    // Copia de seguridad completa: descarga en un .json todo lo que hay en Supabase
+    // (furgonetas, familias, materiales incluida la papelera, y movimientos).
     async function exportarBackupCompleto() {
       const [furgonetasR, categoriasR, materialesR, movimientosR] = await Promise.all([
         supabaseClient.from("furgonetas").select("*").order("id"),
@@ -1339,22 +1413,6 @@
       URL.revokeObjectURL(url);
     }
 
-    async function loadHerramientasForCurrentFurgo() {
-      const { data, error } = await supabaseClient
-        .from("materiales").select("*")
-        .eq("furgo_id", currentFurgoIndex).eq("tipo", "herramienta").eq("activo", true).order("id");
-      if (error) { alert("Error cargando herramientas: " + error.message); materialEstandar = []; return; }
-      materialEstandar = data.map(row => ({ id: row.id, name: row.nombre, qty: row.cantidad }));
-    }
-
-    async function loadMioForCurrentFurgo() {
-      const { data, error } = await supabaseClient
-        .from("materiales").select("*")
-        .eq("furgo_id", currentFurgoIndex).eq("tipo", "mio").eq("activo", true).order("id");
-      if (error) { alert("Error cargando material mío: " + error.message); materialMio = []; return; }
-      materialMio = data.map(row => ({ id: row.id, name: row.nombre, qty: row.cantidad }));
-    }
-
     function nombreCategoria(catKey) {
       const c = CATEGORIAS.find(c => c.key === catKey);
       return c ? c.label : catKey;
@@ -1367,36 +1425,38 @@
       document.title = `Stock de Almacén - ${nombre}`;
     }
 
-    async function registrarMovimiento(itemId, entradas, salidas) {
-      const tipo = entradas > 0 ? "entrada" : "salida";
-      const cantidad = entradas > 0 ? entradas : salidas;
-      const { error } = await supabaseClient.from("movimientos").insert({
-        material_id: itemId,
-        tipo,
-        cantidad,
-        quien_email: operarioActual || "Sin nombre"
-      });
-      if (error) alert("El stock se ha guardado, pero el movimiento no se pudo registrar en el historial: " + error.message);
-    }
+    // Totales de entradas/salidas de la furgoneta actual. Se guardan en memoria y solo
+    // se vuelven a pedir cuando cambia algo (antes se consultaban en cada + o −).
+    let movStatsCache = { entradas: 0, salidas: 0 };
+    let statsSeq = 0, statsTimer = null;
 
-    async function cargarMovimientosStats() {
+    async function refrescarMovStats() {
+      const furgo = currentFurgoIndex;
+      const seq = ++statsSeq;
       const { data, error } = await supabaseClient
         .from("movimientos")
         .select("tipo, cantidad, revertido, materiales!inner(furgo_id)")
-        .eq("materiales.furgo_id", currentFurgoIndex);
-      if (error) { console.error(error); return { entradas: 0, salidas: 0 }; }
+        .eq("materiales.furgo_id", furgo);
+      if (seq !== statsSeq || furgo !== currentFurgoIndex) return;
+      if (error) { console.error(error); return; }
       let entradas = 0, salidas = 0;
       data.forEach(m => {
         if (m.revertido) return;
         if (m.tipo === "entrada") entradas += m.cantidad; else salidas += m.cantidad;
       });
-      return { entradas, salidas };
+      movStatsCache = { entradas, salidas };
+      renderMovStats();
     }
 
-    async function renderMovStats() {
+    function programarStats() {
+      clearTimeout(statsTimer);
+      statsTimer = setTimeout(refrescarMovStats, 700);
+    }
+
+    function renderMovStats() {
       const el = document.getElementById("movStats");
       if (!el) return;
-      const t = await cargarMovimientosStats();
+      const t = movStatsCache;
       el.innerHTML = `
         <button type="button" class="mov-pill mov-in" onclick="openMovModal('entradas')">🔺 Entradas: ${t.entradas}</button>
         <button type="button" class="mov-pill mov-out" onclick="openMovModal('salidas')">🔻 Salidas: ${t.salidas}</button>
@@ -1430,12 +1490,12 @@
 
       const { data, error } = await supabaseClient
         .from("movimientos")
-        .select("id, tipo, cantidad, fecha, quien_email, revertido, revertido_por_email, materiales!inner(nombre, categoria, furgo_id)")
+        .select("id, tipo, cantidad, fecha, quien_email, revertido, revertido_por_email, ajuste, materiales!inner(nombre, categoria, furgo_id)")
         .eq("tipo", tipoLog)
         .eq("materiales.furgo_id", currentFurgoIndex)
         .order("fecha", { ascending: false });
 
-      if (error) { tbody.innerHTML = `<div class="mov-row-empty">Error cargando movimientos: ${error.message}</div>`; return; }
+      if (error) { tbody.innerHTML = `<div class="mov-row-empty">Error cargando movimientos: ${esc(error.message)}</div>`; return; }
 
       if (!data || data.length === 0) {
         tbody.innerHTML = `<div class="mov-row-empty">Todavía no hay movimientos de este tipo en esta furgoneta/almacén.</div>`;
@@ -1445,13 +1505,16 @@
           const fechaTxt = d.toLocaleDateString("es-ES") + " " + d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
           const cat = nombreCategoria(r.materiales.categoria);
           const accion = r.revertido
-            ? `<span class="mov-reverted">↩️ Revertido por ${r.revertido_por_email}</span>`
-            : `<button type="button" class="mov-undo-btn" onclick="revertirMovimiento(${r.id})">↩️ Revertir</button>`;
+            ? `<span class="mov-reverted">↩️ Revertido por ${esc(r.revertido_por_email)}</span>`
+            : (puedoEscribirEnFurgo(currentFurgoIndex)
+                ? `<button type="button" class="mov-undo-btn" onclick="revertirMovimiento(${Number(r.id)})">↩️ Revertir</button>`
+                : '');
+          const ajusteTag = r.ajuste ? ' · <span class="mov-ajuste">✏️ ajuste a mano</span>' : '';
           return `
           <div class="mov-row"${r.revertido ? ' style="opacity:0.5;"' : ''}>
             <div class="mov-row-main">
-              <div class="mov-row-name">${r.materiales.nombre}</div>
-              <div class="mov-row-meta">${fechaTxt} · ${cat} · ${r.quien_email || "Sin nombre"}</div>
+              <div class="mov-row-name">${esc(r.materiales.nombre)}</div>
+              <div class="mov-row-meta">${fechaTxt} · ${esc(cat)} · ${esc(r.quien_email || "Sin nombre")}${ajusteTag}</div>
             </div>
             <div class="mov-row-qty ${tipo === 'entradas' ? 'mov-in-cell' : 'mov-out-cell'}">${r.cantidad}</div>
             <div>${accion}</div>
@@ -1461,38 +1524,30 @@
       }
     }
 
-    // Revierte un movimiento concreto: ajusta el stock en sentido contrario y deja constancia
-    // de quién lo revirtió, sin borrar el movimiento original (para que quede quién hizo qué).
+    // Revierte un movimiento concreto: ajusta el stock en sentido contrario (y devuelve al
+    // Almacén Principal lo que se descontó de allí), todo en una sola operación en Supabase.
+    // El movimiento original no se borra: queda marcado con quién lo revirtió.
+    let revirtiendo = false;
     async function revertirMovimiento(movId) {
+      if (revirtiendo) return;
       const { data: mov, error: e1 } = await supabaseClient
         .from("movimientos")
-        .select("*, materiales!inner(id, nombre, cantidad, furgo_id)")
+        .select("tipo, revertido, materiales!inner(nombre)")
         .eq("id", movId)
         .single();
       if (e1 || !mov) { alert("No se pudo cargar el movimiento: " + (e1 ? e1.message : "no encontrado")); return; }
       if (mov.revertido) return;
       if (!confirm(`¿Revertir este movimiento de "${mov.materiales.nombre}"? Se ajustará el stock y quedará registrado quién lo revirtió.`)) return;
 
-      const nuevaCantidad = mov.tipo === "entrada"
-        ? Math.max(0, mov.materiales.cantidad - mov.cantidad)
-        : mov.materiales.cantidad + mov.cantidad;
+      revirtiendo = true;
+      try {
+        const { error } = await supabaseClient.rpc("revertir_movimiento", { p_mov_id: movId });
+        if (error) { alert("No se pudo revertir: " + error.message); return; }
+      } finally { revirtiendo = false; }
 
-      let r = await supabaseClient.from("materiales").update({ cantidad: nuevaCantidad }).eq("id", mov.material_id);
-      if (r.error) { alert("No se pudo ajustar el stock: " + r.error.message); return; }
-
-      if (mov.tipo === "entrada" && mov.materiales.furgo_id !== 0) {
-        await descontarDeAlmacenPrincipalPorNombre(mov.materiales.nombre, -mov.cantidad);
-      }
-
-      r = await supabaseClient.from("movimientos").update({
-        revertido: true,
-        revertido_por_email: operarioActual || "Sin nombre",
-        revertido_en: new Date().toISOString()
-      }).eq("id", movId);
-      if (r.error) { alert("El stock se ajustó pero no se pudo marcar como revertido: " + r.error.message); }
-
-      await loadItemsForCurrentFurgo();
+      await cargarFurgoActual();
       render();
+      refrescarMovStats();
       openMovModal(mov.tipo === "entrada" ? "entradas" : "salidas");
     }
 
@@ -1520,7 +1575,7 @@
         .select("fecha, materiales!inner(furgo_id)")
         .eq("materiales.furgo_id", currentFurgoIndex);
 
-      if (error) { sel.innerHTML = `<option value="">Error: ${error.message}</option>`; return; }
+      if (error) { sel.innerHTML = `<option value="">Error: ${esc(error.message)}</option>`; return; }
 
       const meses = Array.from(new Set((data || []).map(m => m.fecha.slice(0, 7)))).sort().reverse();
       if (meses.length === 0) {
@@ -1534,26 +1589,6 @@
       if (!e || e.target === document.getElementById("exportMovModal") || e.target.classList.contains("m-cancel")) {
         document.getElementById("exportMovModal").style.display = "none";
       }
-    }
-
-    // Datos de ejemplo para poder probar las exportaciones (Reponer) sin tener que esperar
-    // a mover stock real. Se puede pulsar varias veces sin duplicar en exceso: siempre coge
-    // los 5 primeros consumibles.
-    async function cargarDatosEjemplo() {
-      if (!confirm("Esto va a poner cantidades y mínimos de EJEMPLO en 5 consumibles de esta furgoneta, solo para comprobar que 'Reponer' funciona. ¿Continuar?")) return;
-
-      const muestra = items.slice(0, 5);
-      for (let idx = 0; idx < muestra.length; idx++) {
-        const item = muestra[idx];
-        const nuevaQty = idx % 2 === 0 ? 1 : 3; // por debajo del mínimo -> aparece en "Reponer"
-        const { error } = await supabaseClient.from("materiales").update({ minimo: 5, cantidad: nuevaQty }).eq("id", item.id);
-        if (error) { alert("Error metiendo datos de ejemplo: " + error.message); return; }
-        item.min = 5;
-        item.qty = nuevaQty;
-        registrarMovimiento(item.id, nuevaQty, 0);
-      }
-      render();
-      alert("Datos de ejemplo cargados. Ya puedes probar 'Exportar a Google Sheets' en la pestaña Reponer.");
     }
 
     async function exportMovimientosMes() {
@@ -1571,7 +1606,7 @@
 
       const { data, error } = await supabaseClient
         .from("movimientos")
-        .select("fecha, tipo, cantidad, quien_email, revertido, materiales!inner(nombre, categoria, furgo_id)")
+        .select("fecha, tipo, cantidad, quien_email, revertido, ajuste, materiales!inner(nombre, categoria, furgo_id)")
         .eq("materiales.furgo_id", currentFurgoIndex)
         .gte("fecha", desde)
         .lt("fecha", hasta)
@@ -1589,11 +1624,12 @@
           m.tipo === "entrada" ? "Entrada" : "Salida",
           m.cantidad,
           m.quien_email || "",
+          m.ajuste ? "Sí" : "No",
           m.revertido ? "Sí" : "No"
         ];
       });
 
-      const headers = ["Fecha", "Hora", "Producto", "Categoría", "Tipo", "Cantidad", "Quién", "Revertido"];
+      const headers = ["Fecha", "Hora", "Producto", "Categoría", "Tipo", "Cantidad", "Quién", "Ajuste a mano", "Revertido"];
       const ws = XLSX.utils.aoa_to_sheet([headers, ...filas]);
       const colWidths = headers.map((h, colIdx) => {
         let maxLen = h.length;
@@ -1659,9 +1695,9 @@
       if (idx === currentFurgoIndex) return;
       currentFurgoIndex = idx;
       localStorage.setItem(FURGO_SELECTED_KEY, String(currentFurgoIndex));
-      await loadItemsForCurrentFurgo();
-      await loadHerramientasForCurrentFurgo();
-      await loadMioForCurrentFurgo();
+      movStatsCache = { entradas: 0, salidas: 0 };
+      refrescarMovStats();
+      await cargarFurgoActual();
       actualizarBadgePapelera();
       actualizarControlesEscritura();
       updateHeaderForFurgo();
@@ -1744,8 +1780,12 @@
     // en una furgoneta concreta para un trabajo puntual, sin que ese material pase a formar
     // parte del catálogo normal de esa furgoneta. Solo responsable, solo desde Almacén Principal.
     let asignarMaterialId = null;
+    let asignando = false;
 
-    function abrirAsignarModal(materialId, nombre, disponible) {
+    function abrirAsignarModal(materialId) {
+      const item = items.find(i => i.id === materialId);
+      if (!item) return;
+      const nombre = item.name, disponible = qtyDe(item);
       asignarMaterialId = materialId;
       document.getElementById("asignarNombre").textContent = nombre;
       document.getElementById("asignarDisponible").textContent = disponible;
@@ -1753,8 +1793,9 @@
       document.getElementById("asignarCantidad").max = disponible;
 
       const sel = document.getElementById("asignarFurgoSelect");
-      sel.innerHTML = furgonetas
-        .map((nombreFurgo, idx) => idx === 0 ? "" : `<option value="${idx}">${nombreFurgo}</option>`)
+      sel.innerHTML = vanIds
+        .filter(id => id !== 0)
+        .map(id => `<option value="${id}">${esc(furgonetas[id])}</option>`)
         .join("");
 
       document.getElementById("asignarModal").style.display = "flex";
@@ -1770,16 +1811,21 @@
       const furgoDestino = parseInt(document.getElementById("asignarFurgoSelect").value, 10);
       const cantidad = parseInt(document.getElementById("asignarCantidad").value, 10);
       if (!cantidad || cantidad <= 0) { alert("Indica una cantidad válida."); return; }
+      if (asignando) return;
+      asignando = true;
 
-      const { error } = await supabaseClient.rpc("asignar_a_furgoneta", {
-        p_material_id: asignarMaterialId,
-        p_furgo_destino: furgoDestino,
-        p_cantidad: cantidad
-      });
+      let error;
+      try {
+        ({ error } = await supabaseClient.rpc("asignar_a_furgoneta", {
+          p_material_id: asignarMaterialId,
+          p_furgo_destino: furgoDestino,
+          p_cantidad: cantidad
+        }));
+      } finally { asignando = false; }
       if (error) { alert("No se pudo asignar: " + error.message); return; }
 
       closeAsignarModal();
-      await loadItemsForCurrentFurgo();
+      await cargarFurgoActual();
       render();
       alert(`Asignado: ${cantidad} unidad(es) a ${furgonetas[furgoDestino]}.`);
     }
@@ -1796,7 +1842,7 @@
         .eq("activo", false)
         .order("borrado_en", { ascending: false });
 
-      if (error) { tbody.innerHTML = `<div class="mov-row-empty">Error cargando la papelera: ${error.message}</div>`; return; }
+      if (error) { tbody.innerHTML = `<div class="mov-row-empty">Error cargando la papelera: ${esc(error.message)}</div>`; return; }
 
       if (!data || data.length === 0) {
         tbody.innerHTML = `<div class="mov-row-empty">La papelera de esta furgoneta/almacén está vacía.</div>`;
@@ -1807,10 +1853,10 @@
           return `
           <div class="mov-row">
             <div class="mov-row-main">
-              <div class="mov-row-name">${m.nombre}</div>
-              <div class="mov-row-meta">${etiquetaTipoPapelera(m.tipo)} · borrado por ${m.borrado_por_email || "Sin nombre"} · ${fechaTxt}</div>
+              <div class="mov-row-name">${esc(m.nombre)}</div>
+              <div class="mov-row-meta">${etiquetaTipoPapelera(m.tipo)} · borrado por ${esc(m.borrado_por_email || "Sin nombre")} · ${fechaTxt}</div>
             </div>
-            <div><button type="button" class="mov-undo-btn" onclick="restaurarDePapelera(${m.id})">♻️ Restaurar</button></div>
+            <div>${puedoEscribirEnFurgo(currentFurgoIndex) ? `<button type="button" class="mov-undo-btn" onclick="restaurarDePapelera(${Number(m.id)})">♻️ Restaurar</button>` : ''}</div>
           </div>
         `;
         }).join("");
@@ -1823,9 +1869,7 @@
         activo: true, borrado_por_email: null, borrado_en: null
       }).eq("id", id);
       if (error) { alert("No se pudo restaurar: " + error.message); return; }
-      await loadItemsForCurrentFurgo();
-      await loadHerramientasForCurrentFurgo();
-      await loadMioForCurrentFurgo();
+      await cargarFurgoActual();
       actualizarBadgePapelera();
       render();
       openPapeleraModal();
@@ -1849,54 +1893,85 @@
       if (isNaN(savedIdx) || !vanIds.includes(savedIdx)) savedIdx = 0;
       currentFurgoIndex = savedIdx;
 
-      await loadItemsForCurrentFurgo();
-      await loadHerramientasForCurrentFurgo();
-      await loadMioForCurrentFurgo();
+      await cargarFurgoActual();
       actualizarBadgePapelera();
       actualizarControlesEscritura();
       renderVanTabs();
       updateHeaderForFurgo();
       render();
+      refrescarMovStats();
+      suscribirTiempoReal();
     }
 
-    // Descuenta del Almacén Principal (furgoneta 0) la cantidad que entra en otra furgoneta.
-    // Un técnico no tiene permiso para tocar el Almacén Principal directamente (RLS se lo impide),
-    // así que esto llama a una función de Supabase con permisos elevados que SOLO hace esta resta.
-    async function descontarDeAlmacenPrincipalPorNombre(nombre, cantidad) {
-      const { error } = await supabaseClient.rpc("ajustar_almacen_principal", { p_nombre: nombre, p_delta: cantidad });
-      if (error) console.error("No se pudo ajustar el Almacén Principal:", error.message);
+    // ----- Tiempo real: lo que cambia otro técnico (o tú en otro dispositivo) aparece solo -----
+    let recargaTimer = null;
+    function programarRecarga() {
+      clearTimeout(recargaTimer);
+      recargaTimer = setTimeout(async () => {
+        await cargarFurgoActual();
+        actualizarBadgePapelera();
+        programarRender();
+      }, 300);
     }
 
-    async function changeQty(id, delta) {
+    let canalTiempoReal = null;
+    function suscribirTiempoReal() {
+      if (canalTiempoReal) return;
+      canalTiempoReal = supabaseClient.channel("stock-hoopo")
+        .on("postgres_changes", { event: "*", schema: "public", table: "materiales" }, p => {
+          const fila = (p.new && p.new.furgo_id !== undefined) ? p.new : p.old;
+          // Un DELETE sin datos de la fila no dice de qué furgoneta era: recargamos por si acaso.
+          if (!fila || fila.furgo_id === undefined || Number(fila.furgo_id) === currentFurgoIndex) programarRecarga();
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "movimientos" }, () => programarStats())
+        .on("postgres_changes", { event: "*", schema: "public", table: "furgonetas" }, async () => {
+          await loadFurgonetas();
+          renderVanTabs();
+          updateHeaderForFurgo();
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "categorias" }, async () => {
+          await loadCategorias();
+          populateCategorySelect();
+          programarRender();
+        })
+        .subscribe();
+
+      // Al volver a la app (móvil en segundo plano, pestaña oculta) se pone al día.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") { programarRecarga(); programarStats(); }
+      });
+      window.addEventListener("online", () => { programarRecarga(); programarStats(); });
+    }
+
+    // ----- Sumar / restar -----
+    // Cada toque se manda al servidor como "+1" o "−1" (no como "ahora hay 7"), así dos
+    // personas tocando el mismo material a la vez nunca se pisan. La función de Supabase
+    // ajusta la cantidad, apunta el movimiento y descuenta del Almacén Principal en una
+    // sola operación: o se hace todo, o no se hace nada.
+    // Los toques de un mismo material se envían en fila, uno detrás de otro.
+    function enviarAjuste(item, delta) {
+      if (qtyDe(item) + delta < 0) return;
+      item.pend = (item.pend || 0) + delta;
+      programarRender();
+      item.cola = (item.cola || Promise.resolve()).then(async () => {
+        try {
+          const { data, error } = await supabaseClient.rpc("ajustar_material", { p_id: item.id, p_delta: delta });
+          if (error) throw error;
+          item.qty = Number(data?.cantidad ?? item.qty);
+        } catch (e) {
+          toast("No se ha guardado: " + (e?.message || "sin conexión con el servidor"));
+        } finally {
+          item.pend -= delta;
+          programarRender();
+          programarStats();
+        }
+      });
+    }
+
+    function changeQty(id, delta) {
       if (!puedoEscribirEnFurgo(currentFurgoIndex)) { alert("Esta furgoneta/almacén no es tuya: solo puedes verla, no modificarla."); return; }
       const item = items.find(i => i.id === id);
-      if (!item) return;
-      const antes = item.qty;
-      const nuevaQty = Math.max(0, item.qty + delta);
-      const realDelta = nuevaQty - antes;
-      if (realDelta === 0) return;
-
-      item.qty = nuevaQty; // actualización optimista en pantalla mientras se guarda
-      render();
-
-      const { error } = await supabaseClient.from("materiales").update({ cantidad: nuevaQty }).eq("id", id);
-      if (error) {
-        item.qty = antes; // revertimos en pantalla si no se pudo guardar
-        render();
-        alert("No se pudo guardar el cambio: " + error.message);
-        return;
-      }
-
-      if (realDelta > 0) {
-        registrarMovimiento(id, realDelta, 0);
-        // Si la entrada ocurre en una furgoneta que no es el Almacén Principal,
-        // ese material se ha cargado desde el almacén central: se descuenta de allí.
-        if (currentFurgoIndex !== 0) {
-          descontarDeAlmacenPrincipalPorNombre(item.name, realDelta);
-        }
-      } else {
-        registrarMovimiento(id, 0, Math.abs(realDelta));
-      }
+      if (item) enviarAjuste(item, delta);
     }
 
     function handleSearch() {
@@ -2008,7 +2083,7 @@
 
       const opciones = [`<option value="all">📦 Todas las familias (${items.length})</option>`];
       categoriasOrdenadasPorUso().forEach(catDef => {
-        opciones.push(`<option value="${catDef.key}">${catDef.label} (${catDef.count})</option>`);
+        opciones.push(`<option value="${esc(catDef.key)}">${esc(catDef.label)} (${catDef.count})</option>`);
       });
       sel.innerHTML = opciones.join("");
       sel.value = currentSub;
@@ -2034,7 +2109,7 @@
       renderMovStats();
 
       let lowCount = 0;
-      items.forEach(i => { if (i.min > 0 && i.qty <= i.min) lowCount++; });
+      items.forEach(i => { if (i.min > 0 && qtyDe(i) <= i.min) lowCount++; });
 
       document.getElementById("countConsumibles").textContent = items.length;
       document.getElementById("countEstandar").textContent = materialEstandar.length;
@@ -2067,14 +2142,14 @@
           const card = document.createElement("div");
           card.className = "item-card mio-card";
           card.innerHTML = `
-            <div class="item-info consumable-info" onclick="openEditTool('mio', '${item.id}')">
-              <div class="item-name">${item.name}</div>
+            <div class="item-info consumable-info" onclick="openEditTool('mio', ${Number(item.id)})">
+              <div class="item-name">${esc(item.name)}</div>
               <div class="item-meta"><span>Herramienta personal</span><span>✎ Editar</span></div>
             </div>
             <div class="controls">
-              <button class="btn-step btn-minus" onclick="event.stopPropagation(); changeToolQty('mio', '${item.id}', -1)">−</button>
-              <div class="qty-box"><div class="qty-val">${item.qty}</div></div>
-              <button class="btn-step btn-plus" onclick="event.stopPropagation(); changeToolQty('mio', '${item.id}', 1)">+</button>
+              <button class="btn-step btn-minus" onclick="event.stopPropagation(); changeToolQty('mio', ${Number(item.id)}, -1)">−</button>
+              <div class="qty-box${item.pend ? ' guardando' : ''}"><div class="qty-val">${qtyDe(item)}</div></div>
+              <button class="btn-step btn-plus" onclick="event.stopPropagation(); changeToolQty('mio', ${Number(item.id)}, 1)">+</button>
             </div>
           `;
           container.appendChild(card);
@@ -2093,14 +2168,14 @@
           const card = document.createElement("div");
           card.className = "item-card estandar-card";
           card.innerHTML = `
-            <div class="item-info consumable-info" onclick="openEditTool('estandar', '${item.id}')">
-              <div class="item-name">${item.name}</div>
+            <div class="item-info consumable-info" onclick="openEditTool('estandar', ${Number(item.id)})">
+              <div class="item-name">${esc(item.name)}</div>
               <div class="item-meta"><span>Dotación furgoneta</span><span>✎ Editar</span></div>
             </div>
             <div class="controls">
-              <button class="btn-step btn-minus" onclick="event.stopPropagation(); changeToolQty('estandar', '${item.id}', -1)">−</button>
-              <div class="qty-box"><div class="qty-val">${item.qty}</div></div>
-              <button class="btn-step btn-plus" onclick="event.stopPropagation(); changeToolQty('estandar', '${item.id}', 1)">+</button>
+              <button class="btn-step btn-minus" onclick="event.stopPropagation(); changeToolQty('estandar', ${Number(item.id)}, -1)">−</button>
+              <div class="qty-box${item.pend ? ' guardando' : ''}"><div class="qty-val">${qtyDe(item)}</div></div>
+              <button class="btn-step btn-plus" onclick="event.stopPropagation(); changeToolQty('estandar', ${Number(item.id)}, 1)">+</button>
             </div>
           `;
           container.appendChild(card);
@@ -2118,12 +2193,11 @@
         `;
         container.appendChild(toolbar);
 
-        let lowItems = items.filter(i => i.min > 0 && i.qty <= i.min && i.name.toLowerCase().includes(searchQuery));
+        let lowItems = items.filter(i => i.min > 0 && qtyDe(i) <= i.min && i.name.toLowerCase().includes(searchQuery));
         if (lowItems.length === 0) {
           const empty = document.createElement("div");
           empty.style.cssText = "grid-column:1/-1; text-align:center; padding: 30px 10px; color: var(--text-muted); font-size: 0.85rem;";
-          empty.innerHTML = `✅ Todo el consumible está por encima del mínimo.<br><br>
-            <button type="button" class="export-btn export-sheets" style="flex:0 0 auto; padding:8px 14px;" onclick="cargarDatosEjemplo()">🧪 Rellenar con datos de ejemplo (para probar la exportación)</button>`;
+          empty.textContent = "✅ Todo el consumible está por encima del mínimo.";
           container.appendChild(empty);
           return;
         }
@@ -2159,31 +2233,32 @@
     }
 
     function createItemCard(item) {
-      const isLow = item.min > 0 && item.qty <= item.min;
+      const qty = qtyDe(item);
+      const isLow = item.min > 0 && qty <= item.min;
       const card = document.createElement("div");
 
       const puedeAsignar = currentFurgoIndex === 0 && esResponsable() && esCategoriaSoloAlmacen(item.cat);
       card.className = `item-card ${isLow ? 'warning' : ''} ${puedeAsignar ? 'con-asignar' : ''}`;
 
       const filaAsignar = puedeAsignar
-        ? `<button type="button" class="asignar-strip" onclick="event.stopPropagation(); abrirAsignarModal(${item.id}, '${item.name.replace(/'/g, "\\'")}', ${item.qty})">📤 Asignar a técnico</button>`
+        ? `<button type="button" class="asignar-strip" onclick="event.stopPropagation(); abrirAsignarModal(${Number(item.id)})">📤 Asignar a técnico</button>`
         : '';
 
       card.innerHTML = `
         <div class="item-card-top">
-          <div class="item-info consumable-info" onclick="openEditModal(${item.id})">
-            <div class="item-name">${item.name}</div>
+          <div class="item-info consumable-info" onclick="openEditModal(${Number(item.id)})">
+            <div class="item-name">${esc(item.name)}</div>
             <div class="item-meta">
-              <span>Mín: ${item.min}</span>
+              <span>Mín: ${Number(item.min)}</span>
               ${isLow ? '<span class="reponer-tag">⚠️ REPONER</span>' : ''}
             </div>
           </div>
           <div class="controls">
-            <button class="btn-step btn-minus" onclick="changeQty(${item.id}, -1)">−</button>
-            <div class="qty-box">
-              <div class="qty-val">${item.qty}</div>
+            <button class="btn-step btn-minus" onclick="changeQty(${Number(item.id)}, -1)">−</button>
+            <div class="qty-box${item.pend ? ' guardando' : ''}">
+              <div class="qty-val">${qty}</div>
             </div>
-            <button class="btn-step btn-plus" onclick="changeQty(${item.id}, 1)">+</button>
+            <button class="btn-step btn-plus" onclick="changeQty(${Number(item.id)}, 1)">+</button>
           </div>
         </div>
         ${filaAsignar}
@@ -2196,6 +2271,7 @@
       document.getElementById("editId").value = "";
       document.getElementById("mName").value = "";
       document.getElementById("mQty").value = "5";
+      document.getElementById("mQty").dataset.inicial = "";
       document.getElementById("mMin").value = "2";
       document.getElementById("btnDelete").style.display = "none";
       document.getElementById("itemModal").style.display = "flex";
@@ -2210,7 +2286,8 @@
       document.getElementById("editId").value = item.id;
       document.getElementById("mName").value = item.name;
       document.getElementById("mCategory").value = item.cat || CATEGORIAS[0].key;
-      document.getElementById("mQty").value = item.qty;
+      document.getElementById("mQty").value = qtyDe(item);
+      document.getElementById("mQty").dataset.inicial = qtyDe(item);
       document.getElementById("mMin").value = item.min;
       document.getElementById("btnDelete").style.display = esResponsable() ? "inline-block" : "none";
       document.getElementById("itemModal").style.display = "flex";
@@ -2240,33 +2317,57 @@
       render();
     }
 
+    // Cambiar el stock a mano desde "Editar" pasa por Supabase como ajuste (queda en el
+    // historial marcado como "ajuste a mano" y no toca el Almacén Principal). Si no has
+    // cambiado el número, no se toca la cantidad: así no pisas lo que otro haya movido
+    // mientras tenías la ventana abierta.
+    async function fijarCantidadSiCambio(item, inputId) {
+      const input = document.getElementById(inputId);
+      const nueva = Math.max(0, parseInt(input.value, 10) || 0);
+      if (input.dataset.inicial === "" || nueva === Number(input.dataset.inicial)) return true;
+      const { data, error } = await supabaseClient.rpc("fijar_cantidad", { p_id: item.id, p_cantidad: nueva });
+      if (error) { alert("Se guardó lo demás, pero no la cantidad: " + error.message); return false; }
+      item.qty = Number(data?.cantidad ?? nueva);
+      programarStats();
+      return true;
+    }
+
+    let guardando = false;
     async function saveItem() {
+      if (guardando) return;
       const name = document.getElementById("mName").value.trim();
       const cat = document.getElementById("mCategory").value;
-      const qty = parseInt(document.getElementById("mQty").value, 10) || 0;
-      const min = parseInt(document.getElementById("mMin").value, 10) || 0;
+      const qty = Math.max(0, parseInt(document.getElementById("mQty").value, 10) || 0);
+      const min = Math.max(0, parseInt(document.getElementById("mMin").value, 10) || 0);
       const editId = document.getElementById("editId").value;
 
       if (!name) return alert("Indica un nombre");
 
-      if (editId) {
-        const id = parseInt(editId, 10);
-        const { error } = await supabaseClient.from("materiales").update({
-          nombre: name, categoria: cat, cantidad: qty, minimo: min
-        }).eq("id", id);
-        if (error) { alert("No se pudo guardar: " + error.message); return; }
-        const item = items.find(i => i.id === id);
-        if (item) { item.name = name; item.cat = cat; item.qty = qty; item.min = min; }
-      } else {
-        const { data, error } = await supabaseClient.from("materiales").insert({
-          furgo_id: currentFurgoIndex, tipo: "consumible", nombre: name, categoria: cat, cantidad: qty, minimo: min
-        }).select().single();
-        if (error) { alert("No se pudo crear: " + error.message); return; }
-        items.push({ id: data.id, name: data.nombre, cat: data.categoria, qty: data.cantidad, min: data.minimo });
-      }
-
-      closeModal();
-      render();
+      guardando = true;
+      try {
+        if (editId) {
+          const id = parseInt(editId, 10);
+          const item = items.find(i => i.id === id);
+          const { error } = await supabaseClient.from("materiales").update({
+            nombre: name, categoria: cat, minimo: min
+          }).eq("id", id);
+          if (error) { alert("No se pudo guardar: " + error.message); return; }
+          if (item) {
+            item.name = name; item.cat = cat; item.min = min;
+            await fijarCantidadSiCambio(item, "mQty");
+          }
+        } else {
+          const { data, error } = await supabaseClient.from("materiales").insert({
+            furgo_id: currentFurgoIndex, tipo: "consumible", nombre: name, categoria: cat, cantidad: qty, minimo: min
+          }).select().single();
+          if (error) { alert("No se pudo crear: " + error.message); return; }
+          if (!items.some(i => i.id === data.id)) {
+            items.push({ id: data.id, name: data.nombre, cat: data.categoria, qty: data.cantidad, min: data.minimo, pend: 0 });
+          }
+        }
+        closeModal();
+        render();
+      } finally { guardando = false; }
     }
 
     // ----- Herramientas / Material Mío: alta, edición y borrado -----
@@ -2276,6 +2377,7 @@
       document.getElementById("toolTipo").value = tipo;
       document.getElementById("toolName").value = "";
       document.getElementById("toolQty").value = "1";
+      document.getElementById("toolQty").dataset.inicial = "";
       document.getElementById("toolBtnDelete").style.display = "none";
       document.getElementById("toolModal").style.display = "flex";
       document.getElementById("toolName").focus();
@@ -2291,7 +2393,8 @@
       document.getElementById("toolEditId").value = item.id;
       document.getElementById("toolTipo").value = tipo;
       document.getElementById("toolName").value = item.name;
-      document.getElementById("toolQty").value = item.qty;
+      document.getElementById("toolQty").value = qtyDe(item);
+      document.getElementById("toolQty").dataset.inicial = qtyDe(item);
       document.getElementById("toolBtnDelete").style.display = esResponsable() ? "inline-block" : "none";
       document.getElementById("toolModal").style.display = "flex";
     }
@@ -2303,6 +2406,7 @@
     }
 
     async function saveTool() {
+      if (guardando) return;
       const tipo = document.getElementById("toolTipo").value;
       if (tipo === 'mio' && currentFurgoIndex === 0) { alert("Material Mío está bloqueado en el Almacén Principal: solo se usa en las furgonetas."); return; }
       const name = document.getElementById("toolName").value.trim();
@@ -2313,21 +2417,26 @@
       if (!name) return alert("Indica un nombre");
 
       const list = tipo === 'mio' ? materialMio : materialEstandar;
-      if (editId) {
-        const { error } = await supabaseClient.from("materiales").update({ nombre: name, cantidad: qtyFinal }).eq("id", editId);
-        if (error) { alert("No se pudo guardar: " + error.message); return; }
-        const item = list.find(i => String(i.id) === String(editId));
-        if (item) { item.name = name; item.qty = qtyFinal; }
-      } else {
-        const { data, error } = await supabaseClient.from("materiales").insert({
-          furgo_id: currentFurgoIndex, tipo, nombre: name, cantidad: qtyFinal
-        }).select().single();
-        if (error) { alert("No se pudo crear: " + error.message); return; }
-        list.push({ id: data.id, name: data.nombre, qty: data.cantidad });
-      }
-
-      closeToolModal();
-      render();
+      guardando = true;
+      try {
+        if (editId) {
+          const item = list.find(i => String(i.id) === String(editId));
+          const { error } = await supabaseClient.from("materiales").update({ nombre: name }).eq("id", editId);
+          if (error) { alert("No se pudo guardar: " + error.message); return; }
+          if (item) {
+            item.name = name;
+            await fijarCantidadSiCambio(item, "toolQty");
+          }
+        } else {
+          const { data, error } = await supabaseClient.from("materiales").insert({
+            furgo_id: currentFurgoIndex, tipo, nombre: name, cantidad: qtyFinal
+          }).select().single();
+          if (error) { alert("No se pudo crear: " + error.message); return; }
+          if (!list.some(i => i.id === data.id)) list.push({ id: data.id, name: data.nombre, qty: data.cantidad, pend: 0 });
+        }
+        closeToolModal();
+        render();
+      } finally { guardando = false; }
     }
 
     async function deleteTool() {
@@ -2351,29 +2460,19 @@
       render();
     }
 
-    async function changeToolQty(tipo, id, delta) {
+    function changeToolQty(tipo, id, delta) {
       if (!puedoEscribirEnFurgo(currentFurgoIndex)) { alert("Esta furgoneta/almacén no es tuya: solo puedes verla, no modificarla."); return; }
       if (tipo === 'mio' && currentFurgoIndex === 0) { alert("Material Mío está bloqueado en el Almacén Principal: solo se usa en las furgonetas."); return; }
       const list = tipo === 'mio' ? materialMio : materialEstandar;
       const item = list.find(i => String(i.id) === String(id));
-      if (!item) return;
-      const antes = item.qty;
-      const nuevaQty = Math.max(0, item.qty + delta);
-      item.qty = nuevaQty;
-      render();
-      const { error } = await supabaseClient.from("materiales").update({ cantidad: nuevaQty }).eq("id", id);
-      if (error) {
-        item.qty = antes;
-        render();
-        alert("No se pudo guardar el cambio: " + error.message);
-      }
+      if (item) enviarAjuste(item, delta);
     }
 
     // ----- Exportación del listado "Reponer" a Excel (CSV) y a PDF (impresión) -----
     function listaReponer() {
       return items
-        .filter(i => i.min > 0 && i.qty <= i.min)
-        .map(i => ({ ...i, pedir: Math.max(0, i.min - i.qty) }));
+        .filter(i => i.min > 0 && qtyDe(i) <= i.min)
+        .map(i => ({ name: i.name, cat: i.cat, min: i.min, qty: qtyDe(i), pedir: Math.max(0, i.min - qtyDe(i)) }));
     }
 
     // Copia texto al portapapeles, con un método de reserva por si el navegador bloquea
@@ -2453,8 +2552,8 @@
 
       let filasHtml = lowItems.map(it => `
         <tr>
-          <td>${it.name}</td>
-          <td>${nombreCategoria(it.cat)}</td>
+          <td>${esc(it.name)}</td>
+          <td>${esc(nombreCategoria(it.cat))}</td>
           <td style="text-align:center;">${it.qty}</td>
           <td style="text-align:center;">${it.min}</td>
           <td style="text-align:center; font-weight:bold;">${it.pedir}</td>
@@ -2472,7 +2571,7 @@
         <html>
         <head>
           <meta charset="UTF-8">
-          <title>Reponer - ${furgonetas[currentFurgoIndex]}</title>
+          <title>Reponer - ${esc(furgonetas[currentFurgoIndex])}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
             h1 { font-size: 18px; margin: 0 0 4px; }
@@ -2480,20 +2579,11 @@
             table { width: 100%; border-collapse: collapse; font-size: 13px; }
             th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
             th { background: #f0f0f0; }
-          
-/* V2.1 · gestión de furgonetas */
-.van-add-btn {
-  border: 1px dashed #2563eb !important;
-  background: #eff6ff !important;
-  color: #2563eb !important;
-  font-weight: 700;
-}
-.van-add-btn:hover { background: #dbeafe !important; }
-</style>
+          </style>
         </head>
         <body>
           <h1>⚠️ Materiales a Reponer</h1>
-          <p class="sub">${furgonetas[currentFurgoIndex]} — Generado el ${new Date().toLocaleString("es-ES")}</p>
+          <p class="sub">${esc(furgonetas[currentFurgoIndex])} — Generado el ${new Date().toLocaleString("es-ES")}</p>
           <table>
             <thead><tr><th>Producto</th><th>Categoría</th><th>Stock</th><th>Mínimo</th><th>Cantidad a Pedir</th></tr></thead>
             <tbody>${filasHtml}</tbody>
