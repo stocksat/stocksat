@@ -1129,6 +1129,10 @@
       }
     }
 
+    supabaseClient.auth.onAuthStateChange((evento) => {
+      if (evento === "SIGNED_OUT") location.reload();
+    });
+
     async function cerrarSesion() {
       if (!confirm(`¿Cerrar sesión de ${operarioActual}?`)) return;
       await supabaseClient.auth.signOut();
@@ -1172,6 +1176,7 @@
     }
 
     async function crearFamilia() {
+      if (!esResponsable()) { alert("Solo el responsable puede crear familias."); return; }
       const nombre = prompt("Nombre de la nueva familia de materiales:");
       if (!nombre || !nombre.trim()) return;
       const label = nombre.trim();
@@ -1649,6 +1654,8 @@
     function renderVanTabs() {
       const bar = document.getElementById("vanTabsBar");
       if (!bar) return;
+      const pista = document.querySelector(".van-tabs-hint");
+      if (pista) pista.style.display = esResponsable() ? "" : "none"; // el técnico no puede renombrar
       bar.innerHTML = "";
 
       vanIds.forEach((id) => {
@@ -1671,9 +1678,9 @@
         });
 
         btn.appendChild(nameSpan);
-        btn.appendChild(editSpan);
+        if (esResponsable()) btn.appendChild(editSpan);
         btn.addEventListener("click", () => selectFurgo(id));
-        btn.addEventListener("dblclick", (e) => {
+        if (esResponsable()) btn.addEventListener("dblclick", (e) => {
           e.stopPropagation();
           renameFurgo(id);
         });
@@ -1688,7 +1695,7 @@
       addBtn.innerHTML = "<span class=\"van-name\">＋ Añadir furgoneta</span>";
       addBtn.title = "Crear una nueva furgoneta con todos los materiales a 0";
       addBtn.addEventListener("click", anadirFurgoneta);
-      bar.appendChild(addBtn);
+      if (esResponsable()) bar.appendChild(addBtn);
     }
 
     async function selectFurgo(idx) {
@@ -1706,6 +1713,7 @@
     }
 
     async function renameFurgo(idx) {
+      if (!esResponsable()) { alert("Solo el responsable puede renombrar furgonetas."); return; }
       const actual = furgonetas[idx];
       const nuevo = prompt("Nuevo nombre para la furgoneta:", actual);
       if (nuevo && nuevo.trim() && nuevo.trim() !== actual) {
@@ -2072,7 +2080,7 @@
       addBtn.className = "sub-chip sub-chip-add";
       addBtn.textContent = "➕ Nueva familia";
       addBtn.addEventListener("click", crearFamilia);
-      bar.appendChild(addBtn);
+      if (esResponsable()) bar.appendChild(addBtn);
 
       renderFamilySelect();
     }
