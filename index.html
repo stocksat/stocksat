@@ -763,6 +763,10 @@
     .qty-box.guardando .qty-val { opacity: 0.55; }
 
     .mov-ajuste { color: var(--mio-color); }
+    .mov-devolucion { color: #34d399; }
+    .btn-devolver { width: 100%; margin: 2px 0 14px; padding: 11px; border-radius: 10px; border: 1px dashed #34d399;
+      background: rgba(52, 211, 153, 0.08); color: #34d399; font-weight: 700; font-size: 0.88rem; cursor: pointer; }
+    .btn-devolver:active { background: rgba(52, 211, 153, 0.18); }
 
     /* Aviso flotante (errores al guardar sin bloquear la pantalla) */
     .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%) translateY(20px); max-width: min(92vw, 420px);
@@ -888,6 +892,8 @@
         </div>
       </div>
 
+      <button type="button" id="btnDevolver" class="btn-devolver" style="display:none;" onclick="abrirDevolver()">↩️ Devolver al almacén (no usado)</button>
+
       <div class="modal-btns">
         <button id="btnDelete" class="m-btn m-del" style="display:none;" onclick="deleteItem()">Eliminar</button>
         <button class="m-btn m-cancel" onclick="closeModal()">Cerrar</button>
@@ -969,6 +975,25 @@
 
       <div class="modal-btns">
         <button class="m-btn m-cancel" onclick="closePapeleraModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: devolver al Almacén Principal material que no se ha usado -->
+  <div id="devolverModal" class="modal-backdrop" onclick="closeDevolver(event)">
+    <div class="modal-sheet" onclick="event.stopPropagation()" style="max-width:380px;">
+      <h2>↩️ Devolver al almacén</h2>
+      <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:14px;">
+        <strong id="devolverNombre"></strong> — tienes <span id="devolverDisponible"></span> en la furgoneta.
+        Lo que devuelvas se suma al Almacén Principal y queda en el historial como devolución, no como gastado.
+      </p>
+      <div class="fg">
+        <label>Cantidad a devolver</label>
+        <input type="number" id="devolverCantidad" min="1" value="1" inputmode="numeric">
+      </div>
+      <div class="modal-btns">
+        <button class="m-btn m-cancel" onclick="closeDevolver()">Cancelar</button>
+        <button id="btnConfirmarDevolver" class="m-btn m-save" onclick="confirmarDevolver()">Devolver</button>
       </div>
     </div>
   </div>
@@ -1495,7 +1520,7 @@
 
       const { data, error } = await supabaseClient
         .from("movimientos")
-        .select("id, tipo, cantidad, fecha, quien_email, revertido, revertido_por_email, ajuste, materiales!inner(nombre, categoria, furgo_id)")
+        .select("id, tipo, cantidad, fecha, quien_email, revertido, revertido_por_email, ajuste, devolucion, materiales!inner(nombre, categoria, furgo_id)")
         .eq("tipo", tipoLog)
         .eq("materiales.furgo_id", currentFurgoIndex)
         .order("fecha", { ascending: false });
@@ -1514,7 +1539,8 @@
             : (puedoEscribirEnFurgo(currentFurgoIndex)
                 ? `<button type="button" class="mov-undo-btn" onclick="revertirMovimiento(${Number(r.id)})">↩️ Revertir</button>`
                 : '');
-          const ajusteTag = r.ajuste ? ' · <span class="mov-ajuste">✏️ ajuste a mano</span>' : '';
+          const ajusteTag = (r.ajuste ? ' · <span class="mov-ajuste">✏️ ajuste a mano</span>' : '')
+            + (r.devolucion ? ' · <span class="mov-devolucion">↩️ devuelto al almacén</span>' : '');
           return `
           <div class="mov-row"${r.revertido ? ' style="opacity:0.5;"' : ''}>
             <div class="mov-row-main">
@@ -1611,7 +1637,7 @@
 
       const { data, error } = await supabaseClient
         .from("movimientos")
-        .select("fecha, tipo, cantidad, quien_email, revertido, ajuste, materiales!inner(nombre, categoria, furgo_id)")
+        .select("fecha, tipo, cantidad, quien_email, revertido, ajuste, devolucion, materiales!inner(nombre, categoria, furgo_id)")
         .eq("materiales.furgo_id", currentFurgoIndex)
         .gte("fecha", desde)
         .lt("fecha", hasta)
@@ -1626,7 +1652,7 @@
           d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
           m.materiales.nombre,
           nombreCategoria(m.materiales.categoria),
-          m.tipo === "entrada" ? "Entrada" : "Salida",
+          m.tipo === "entrada" ? "Entrada" : (m.devolucion ? "Devolución al almacén" : "Salida"),
           m.cantidad,
           m.quien_email || "",
           m.ajuste ? "Sí" : "No",
@@ -2282,6 +2308,7 @@
       document.getElementById("mQty").dataset.inicial = "";
       document.getElementById("mMin").value = "2";
       document.getElementById("btnDelete").style.display = "none";
+      document.getElementById("btnDevolver").style.display = "none";
       document.getElementById("itemModal").style.display = "flex";
       document.getElementById("mName").focus();
     }
@@ -2298,12 +2325,71 @@
       document.getElementById("mQty").dataset.inicial = qtyDe(item);
       document.getElementById("mMin").value = item.min;
       document.getElementById("btnDelete").style.display = esResponsable() ? "inline-block" : "none";
+      document.getElementById("btnDevolver").style.display = currentFurgoIndex !== 0 ? "block" : "none";
       document.getElementById("itemModal").style.display = "flex";
     }
 
     function closeModal(e) {
       if (!e || e.target === document.getElementById("itemModal") || e.target.classList.contains("m-cancel")) {
         document.getElementById("itemModal").style.display = "none";
+      }
+    }
+
+    // ----- Devolver al Almacén Principal material no usado -----
+    // No es lo mismo que "−" (gastado): aquí el material vuelve al almacén. Lo hace una
+    // función de Supabase en una sola operación (resta de la furgo, suma al almacén, lo apunta).
+    let devolverId = null;
+    let devolviendo = false;
+
+    function abrirDevolver() {
+      const id = parseInt(document.getElementById("editId").value, 10);
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+      const disponible = qtyDe(item);
+      if (disponible <= 0) { alert("No tienes unidades de este material en la furgoneta."); return; }
+      devolverId = id;
+      document.getElementById("devolverNombre").textContent = item.name;
+      document.getElementById("devolverDisponible").textContent = disponible;
+      const input = document.getElementById("devolverCantidad");
+      input.value = 1;
+      input.max = disponible;
+      closeModal();
+      document.getElementById("devolverModal").style.display = "flex";
+      input.focus();
+      input.select();
+    }
+
+    function closeDevolver(e) {
+      if (!e || e.target === document.getElementById("devolverModal") || e.target.classList.contains("m-cancel")) {
+        document.getElementById("devolverModal").style.display = "none";
+      }
+    }
+
+    async function confirmarDevolver() {
+      if (devolviendo) return;
+      const item = items.find(i => i.id === devolverId);
+      if (!item) return;
+      const cantidad = parseInt(document.getElementById("devolverCantidad").value, 10);
+      if (!cantidad || cantidad <= 0) { alert("Indica una cantidad válida."); return; }
+      if (cantidad > qtyDe(item)) { alert(`Solo tienes ${qtyDe(item)} en la furgoneta.`); return; }
+
+      devolviendo = true;
+      const btn = document.getElementById("btnConfirmarDevolver");
+      btn.disabled = true;
+      try {
+        await (item.cola || Promise.resolve()); // espera a que terminen los +/− pendientes
+        const { data, error } = await supabaseClient.rpc("devolver_al_almacen", { p_id: item.id, p_cantidad: cantidad });
+        if (error) { alert("No se pudo devolver: " + error.message); return; }
+        item.qty = Number(data?.cantidad ?? item.qty - cantidad);
+        closeDevolver();
+        render();
+        programarStats();
+        toast(`↩️ ${cantidad} × ${item.name} devuelto al Almacén Principal`);
+      } catch (e) {
+        alert("Sin conexión con el servidor. Inténtalo de nuevo.");
+      } finally {
+        devolviendo = false;
+        btn.disabled = false;
       }
     }
 
