@@ -1,9 +1,9 @@
 // Service worker de Stock Hoopo.
 // La app siempre intenta cargar la última versión de la red; la copia guardada
 // solo se usa si no hay cobertura. Los datos (Supabase) nunca se guardan aquí.
-const CACHE = 'stock-v2';
+const CACHE = 'stock-v3';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
-const OPCIONALES = ['./icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
+const OPCIONALES = ['./icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
