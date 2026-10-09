@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Stock de Almacén - Hoopo</title>
   <meta name="theme-color" content="#f4f7fb">
-  <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiU3RvY2sgRnVyZ29uZXRhIiwic2hvcnRfbmFtZSI6IlN0b2NrIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBiMGYxOSIsInRoZW1lX2NvbG9yIjoiIzBiMGYxOSJ9">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Stock">
   <style>
     :root {
       --bg-main: #0b0f19;
@@ -2692,5 +2696,6 @@
 
     comprobarSesion();
   </script>
+<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
 </body>
 </html>
