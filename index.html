@@ -809,8 +809,8 @@
       </div>
       <div class="header-subtitle">
         <span class="company-name">Hoopo</span>
-        <span>•</span>
-        <span class="plate-tag">ROVIRA</span>
+        <span class="rol-sep" style="display:none;">•</span>
+        <span id="rolTag" class="plate-tag" style="display:none;"></span>
         <span>•</span>
         <span class="furgo-owner">Furgo David</span>
       </div>
@@ -1142,10 +1142,27 @@
       const { data: sesion } = await supabaseClient.auth.getSession();
       const uid = sesion?.session?.user?.id;
       if (!uid) { miRol = null; miFurgoId = null; return; }
-      const { data, error } = await supabaseClient.from("perfiles").select("rol, furgo_id").eq("id", uid).maybeSingle();
+      // select("*"): funciona tenga o no la tabla la columna "etiqueta"
+      const { data, error } = await supabaseClient.from("perfiles").select("*").eq("id", uid).maybeSingle();
       if (error || !data) { miRol = null; miFurgoId = null; return; }
       miRol = data.rol;
       miFurgoId = data.furgo_id;
+      miEtiqueta = (data.etiqueta || "").trim();
+      pintarRol();
+    }
+
+    // Etiqueta de la cabecera: la "etiqueta" del perfil si tiene (p. ej. ROVIRA);
+    // si no, el rol de quien ha entrado.
+    let miEtiqueta = "";
+    function pintarRol() {
+      const tag = document.getElementById("rolTag");
+      const sep = document.querySelector(".rol-sep");
+      if (!tag) return;
+      const texto = miEtiqueta ? miEtiqueta.toUpperCase()
+        : miRol === "responsable" ? "RESPONSABLE" : miRol === "tecnico" ? "TÉCNICO" : "";
+      tag.textContent = texto;
+      tag.style.display = texto ? "" : "none";
+      if (sep) sep.style.display = texto ? "" : "none";
     }
 
     // ¿Puedo escribir (sumar/restar/añadir/borrar/editar) en esta furgoneta?
@@ -1170,9 +1187,9 @@
       actualizarBadgeOperario();
       await cargarMiPerfil();
       await init();
-      // Si eres técnico, te lleva directo a tu furgoneta al entrar.
-      if (miRol === "tecnico" && miFurgoId !== null && miFurgoId !== currentFurgoIndex) {
-        selectFurgo(miFurgoId);
+      // Si tienes furgoneta asignada (técnico o responsable), te lleva directo a ella al entrar.
+      if (miFurgoId !== null && miFurgoId !== undefined && vanIds.includes(Number(miFurgoId)) && Number(miFurgoId) !== currentFurgoIndex) {
+        selectFurgo(Number(miFurgoId));
       }
     }
 
