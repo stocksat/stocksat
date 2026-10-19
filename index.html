@@ -796,6 +796,51 @@
       font-size: 0.82rem; box-shadow: 0 8px 24px rgba(0,0,0,0.4); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 9999; }
     .toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+    /* ===== Inicio (panel general, solo responsables) ===== */
+    body.modo-inicio .resumen-bar, body.modo-inicio .top-controls, body.modo-inicio #bottomBar,
+    body.modo-inicio #lowBadge, body.modo-inicio #papeleraBadge { display: none !important; }
+    .van-inicio-btn .van-name { font-weight: 800; }
+    .dash { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px; }
+    .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    @media (min-width: 700px) { .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+    .kpi { background: var(--card-bg, rgba(255,255,255,0.04)); border: 1px solid var(--card-border); border-radius: 12px;
+      padding: 12px; text-align: left; font-family: inherit; color: #e2e8f0; cursor: default; }
+    button.kpi { cursor: pointer; }
+    .kpi .k-num { font-size: 1.6rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .kpi .k-lbl { font-size: 0.72rem; color: var(--text-muted); font-weight: 700; margin-top: 4px; }
+    .kpi .k-sub { font-size: 0.68rem; color: var(--text-muted); margin-top: 2px; }
+    .kpi.k-red { border-color: rgba(239,68,68,0.5); background: rgba(239,68,68,0.10); }
+    .kpi.k-red .k-num { color: #f87171; }
+    .kpi.k-amber { border-color: rgba(245,158,11,0.5); background: rgba(245,158,11,0.10); }
+    .kpi.k-amber .k-num { color: #fbbf24; }
+    .kpi.k-purple .k-num { color: #d8b4fe; }
+    .kpi.k-green .k-num { color: #34d399; }
+    .dash-cols { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 900px) { .dash-cols { grid-template-columns: 1fr 1fr; } }
+    .dash-box { border: 1px solid var(--card-border); border-radius: 12px; background: rgba(255,255,255,0.03); padding: 12px; }
+    .dash-box h3 { font-size: 0.82rem; margin: 0 0 8px; color: #e2e8f0; display: flex; justify-content: space-between; gap: 8px; }
+    .dash-box h3 small { color: var(--text-muted); font-weight: 600; }
+    .dash-list { list-style: none; margin: 0; padding: 0; font-size: 0.8rem; }
+    .dash-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--card-border); }
+    .dash-list li:last-child { border-bottom: none; }
+    .dash-list li > span { min-width: 0; overflow-wrap: anywhere; }
+    .dash-list li b { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .dash-list li b.mov-txt { white-space: normal; max-width: 55%; text-align: right; }
+    .dash-list .sub { display: block; font-size: 0.68rem; color: var(--text-muted); margin-top: 2px; }
+    .dash-list li.clic { cursor: pointer; }
+    .dash-list li.clic:active { background: rgba(255,255,255,0.04); }
+    .dash-scroll { max-height: 560px; overflow-y: auto; padding-right: 6px; overscroll-behavior: contain; }
+    .dash-scroll::-webkit-scrollbar { width: 6px; }
+    .dash-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 99px; }
+    .dash .hint { font-size: 0.75rem; color: var(--text-muted); margin: 0; }
+    .mes-row { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 12px; font-size: 0.8rem; align-items: center; }
+    .mes-row .h { color: var(--text-muted); font-size: 0.68rem; font-weight: 700; }
+    .mes-row b { text-align: right; font-variant-numeric: tabular-nums; }
+    .t-in { color: #34d399; } .t-out { color: #f87171; } .t-dev { color: #5eead4; } .t-aj { color: var(--mio-color); }
+    .t-rev { color: var(--text-muted); text-decoration: line-through; }
+    .barra { height: 6px; border-radius: 99px; background: rgba(255,255,255,0.06); margin-top: 5px; overflow: hidden; }
+    .barra > i { display: block; height: 100%; background: linear-gradient(90deg, #f87171, #fbbf24); border-radius: 99px; }
+
     .autoria { text-align: center; font-size: 0.6rem; color: var(--text-muted); opacity: 0.45; padding: 18px 10px 90px; }
   </style>
 </head>
@@ -1188,8 +1233,11 @@
       await cargarMiPerfil();
       await init();
       // Si tienes furgoneta asignada (técnico o responsable), te lleva directo a ella al entrar.
-      if (miFurgoId !== null && miFurgoId !== undefined && vanIds.includes(Number(miFurgoId)) && Number(miFurgoId) !== currentFurgoIndex) {
-        selectFurgo(Number(miFurgoId));
+      // Sin furgoneta (p. ej. Rovira, que gestiona desde oficina): se abre el Inicio.
+      if (miFurgoId !== null && miFurgoId !== undefined && vanIds.includes(Number(miFurgoId))) {
+        if (Number(miFurgoId) !== currentFurgoIndex) selectFurgo(Number(miFurgoId));
+      } else if (esResponsable()) {
+        abrirInicio();
       }
     }
 
@@ -1307,6 +1355,7 @@
     let furgonetas = [];
     let vanIds = [];
     let currentFurgoIndex = 0;
+    let vistaInicio = false; // true = se está viendo el panel 🏠 Inicio (solo responsables)
 
     function defaultFurgonetas() {
       return [
@@ -1488,7 +1537,7 @@
     }
 
     function updateHeaderForFurgo() {
-      const nombre = furgonetas[currentFurgoIndex];
+      const nombre = vistaInicio ? "Inicio" : furgonetas[currentFurgoIndex];
       const owner = document.querySelector(".furgo-owner");
       if (owner) owner.textContent = nombre;
       document.title = `Stock de Almacén - ${nombre}`;
@@ -1719,14 +1768,24 @@
     function renderVanTabs() {
       const bar = document.getElementById("vanTabsBar");
       if (!bar) return;
+      const conInicio = esResponsable();
       const pista = document.querySelector(".van-tabs-hint");
       if (pista) pista.style.display = esResponsable() ? "" : "none"; // el técnico no puede renombrar
       bar.innerHTML = "";
+      if (conInicio) {
+        const ini = document.createElement("button");
+        ini.type = "button";
+        ini.className = "van-btn van-inicio-btn" + (vistaInicio ? " active" : "");
+        ini.innerHTML = '<span class="van-name">🏠 Inicio</span>';
+        ini.title = "Resumen de todo el stock";
+        ini.addEventListener("click", abrirInicio);
+        bar.appendChild(ini);
+      }
 
       vanIds.forEach((id) => {
         const nombre = furgonetas[id];
         const btn = document.createElement("button");
-        btn.className = "van-btn" + (id === currentFurgoIndex ? " active" : "");
+        btn.className = "van-btn" + (id === currentFurgoIndex && !vistaInicio ? " active" : "");
         btn.type = "button";
 
         const nameSpan = document.createElement("span");
@@ -1764,7 +1823,8 @@
     }
 
     async function selectFurgo(idx) {
-      if (idx === currentFurgoIndex) return;
+      if (idx === currentFurgoIndex && !vistaInicio) return;
+      if (vistaInicio) { vistaInicio = false; document.body.classList.remove("modo-inicio"); }
       currentFurgoIndex = idx;
       localStorage.setItem(FURGO_SELECTED_KEY, String(currentFurgoIndex));
       movStatsCache = { entradas: 0, salidas: 0 };
@@ -1976,11 +2036,186 @@
       suscribirTiempoReal();
     }
 
+    // ===================== 🏠 INICIO =====================
+    // Panel general para responsables: todo el stock de un vistazo (Almacén y furgonetas).
+    let inicioDatos = null;
+    let inicioSeq = 0;
+
+    async function abrirInicio() {
+      if (!esResponsable()) return;
+      vistaInicio = true;
+      document.body.classList.add("modo-inicio");
+      updateHeaderForFurgo();
+      renderVanTabs();
+      if (!inicioDatos) {
+        document.getElementById("itemsContainer").innerHTML =
+          '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--text-muted);">Cargando resumen...</div>';
+      } else {
+        render();
+      }
+      await cargarInicio();
+      if (vistaInicio) render();
+    }
+
+    function inicioMes(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+    function claveMes(fecha) { const d = new Date(fecha); return d.getFullYear() * 12 + d.getMonth(); }
+
+    async function cargarInicio() {
+      const seq = ++inicioSeq;
+      const hoy = new Date();
+      const desde = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString(); // desde el mes pasado
+      const [mat, mov, ult] = await Promise.all([
+        supabaseClient.from("materiales")
+          .select("id, furgo_id, nombre, categoria, cantidad, minimo")
+          .eq("tipo", "consumible").eq("activo", true),
+        supabaseClient.from("movimientos")
+          .select("id, tipo, cantidad, fecha, quien_email, revertido, ajuste, devolucion, materiales!inner(nombre, furgo_id)")
+          .gte("fecha", desde)
+          .order("fecha", { ascending: false })
+          .limit(2000),
+        // Últimos movimientos para la lista con barra (sin límite de fechas)
+        supabaseClient.from("movimientos")
+          .select("id, tipo, cantidad, fecha, quien_email, revertido, ajuste, devolucion, materiales!inner(nombre, furgo_id)")
+          .order("fecha", { ascending: false })
+          .limit(150)
+      ]);
+      if (seq !== inicioSeq) return;
+      if (mat.error || mov.error || ult.error) {
+        toast("No se pudo cargar el resumen: " + ((mat.error || mov.error || ult.error).message));
+        return;
+      }
+      inicioDatos = { materiales: mat.data || [], movimientos: mov.data || [], ultimos: ult.data || [] };
+    }
+
+    function irAUbicacion(furgoId, pestana) {
+      selectFurgo(furgoId).then(() => { if (pestana) setMainTab(pestana); });
+    }
+
+    function textoMovInicio(m) {
+      const n = m.cantidad;
+      let txt, cls;
+      if (m.ajuste) { txt = `✏️ ${m.tipo === "entrada" ? "+" : "−"}${n} ajuste`; cls = "t-aj"; }
+      else if (m.devolucion) { txt = `↩️ ${n} al almacén`; cls = "t-dev"; }
+      else if (m.tipo === "entrada") { txt = `+${n}`; cls = "t-in"; }
+      else { txt = `−${n} gastado`; cls = "t-out"; }
+      if (m.revertido) cls += " t-rev";
+      return { txt, cls };
+    }
+
+    function fechaCortaInicio(f) {
+      const d = new Date(f);
+      return d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" }) + " " +
+             d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function renderInicio() {
+      const container = document.getElementById("itemsContainer");
+      if (!inicioDatos) return;
+      const { materiales, movimientos } = inicioDatos;
+      const visibles = new Set(vanIds);
+      const furgos = vanIds.filter(id => id !== 0);
+      const nombreUb = id => furgonetas[id] || `Furgoneta ${id}`;
+      const bajo = m => m.minimo > 0 && m.cantidad <= m.minimo;
+
+      const alm = materiales.filter(m => m.furgo_id === 0);
+      const almConStock = alm.filter(m => m.cantidad > 0).length;
+      const almBajos = alm.filter(bajo);
+      const almAgotados = alm.filter(m => m.cantidad <= 0 && m.minimo > 0);
+
+      const porFurgo = furgos.map(id => {
+        const lista = materiales.filter(m => m.furgo_id === id);
+        return { id, total: lista.length, conStock: lista.filter(m => m.cantidad > 0).length, bajos: lista.filter(bajo).length };
+      });
+      const furgosCortas = porFurgo.filter(f => f.bajos > 0);
+
+      const hoy = new Date();
+      const mesAct = claveMes(hoy), mesAnt = mesAct - 1;
+      const vivos = movimientos.filter(m => !m.revertido && visibles.has(Number(m.materiales.furgo_id)));
+      const suma = (mes, filtro) => vivos.filter(m => claveMes(m.fecha) === mes && filtro(m)).reduce((a, m) => a + m.cantidad, 0);
+      const fEntrada = m => m.tipo === "entrada" && !m.ajuste;
+      const fGasto   = m => m.tipo === "salida" && !m.ajuste && !m.devolucion;
+      const fDevol   = m => m.devolucion;
+      const fAjuste  = m => m.ajuste;
+
+      const kpi = (num, lbl, sub, cls, accion) =>
+        `<${accion ? `button type="button" data-accion="${accion}"` : "div"} class="kpi ${cls}">
+           <div class="k-num">${num}</div><div class="k-lbl">${lbl}</div>${sub ? `<div class="k-sub">${sub}</div>` : ""}
+         </${accion ? "button" : "div"}>`;
+
+      let html = `<div class="kpis">
+        ${kpi(almConStock, "Con stock en el Almacén", `de ${alm.length} materiales`, "k-green", "almacen")}
+        ${kpi(almBajos.length, "Bajo mínimo en el Almacén", almBajos.length ? "toca para ver la lista" : "todo bien", almBajos.length ? "k-amber" : "", "almacen-reponer")}
+        ${kpi(almAgotados.length, "Agotados en el Almacén", "", almAgotados.length ? "k-red" : "", almAgotados.length ? "almacen-reponer" : "")}
+        ${kpi(furgosCortas.length, "Furgonetas por reponer", `de ${furgos.length} furgonetas`, furgosCortas.length ? "k-amber" : "k-purple", "")}
+      </div>`;
+
+      // 🚨 Alertas
+      const alertas = [];
+      if (almAgotados.length) alertas.push(`<li class="clic" data-ir="0" data-tab="reponer"><span>🔴 Agotados en el Almacén</span><b>${almAgotados.length}</b></li>`);
+      if (almBajos.length) alertas.push(`<li class="clic" data-ir="0" data-tab="reponer"><span>🟠 Bajo mínimo en el Almacén</span><b>${almBajos.length}</b></li>`);
+      furgosCortas.sort((a, b) => b.bajos - a.bajos).forEach(f =>
+        alertas.push(`<li class="clic" data-ir="${f.id}" data-tab="reponer"><span>🚐 ${esc(nombreUb(f.id))}<span class="sub">toca para ver qué reponer</span></span><b>${f.bajos} por reponer</b></li>`));
+      html += `<div class="dash-box"><h3>🚨 Alertas</h3>${alertas.length ? `<ul class="dash-list">${alertas.join("")}</ul>` : `<p class="hint">Sin alertas: todo por encima del mínimo.</p>`}</div>`;
+
+      html += `<div class="dash-cols">`;
+
+      // 📅 Mes
+      const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+      const fila = (lbl, f) => `<span>${lbl}</span><b>${suma(mesAct, f)}</b><b style="color:var(--text-muted)">${suma(mesAnt, f)}</b>`;
+      html += `<div class="dash-box"><h3>📅 ${meses[hoy.getMonth()][0].toUpperCase() + meses[hoy.getMonth()].slice(1)} de ${hoy.getFullYear()} <small>unidades</small></h3>
+        <div class="mes-row">
+          <span class="h"></span><span class="h" style="text-align:right">Este mes</span><span class="h" style="text-align:right">Mes anterior</span>
+          ${fila("🔺 Entradas", fEntrada)}
+          ${fila("🔻 Gastado", fGasto)}
+          ${fila("↩️ Devuelto al almacén", fDevol)}
+          ${fila("✏️ Ajustes a mano", fAjuste)}
+        </div></div>`;
+
+      // 👷 Gasto del mes por furgoneta
+      const gastoFurgo = furgos.map(id => ({ id, n: vivos.filter(m => Number(m.materiales.furgo_id) === id && claveMes(m.fecha) === mesAct && fGasto(m)).reduce((a, m) => a + m.cantidad, 0) }))
+        .filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+      const maxG = gastoFurgo.length ? gastoFurgo[0].n : 1;
+      html += `<div class="dash-box"><h3>👷 Gastado este mes por furgoneta</h3>${gastoFurgo.length
+        ? `<ul class="dash-list">${gastoFurgo.map(x => `<li class="clic" data-ir="${x.id}"><span style="flex:1">${esc(nombreUb(x.id))}<span class="barra"><i style="width:${Math.max(6, Math.round(x.n / maxG * 100))}%"></i></span></span><b>${x.n} uds</b></li>`).join("")}</ul>`
+        : `<p class="hint">Todavía no hay gasto este mes.</p>`}</div>`;
+
+      // 🚐 Estado de las furgonetas
+      html += `<div class="dash-box"><h3>🚐 Estado de las furgonetas</h3>${porFurgo.length
+        ? `<ul class="dash-list">${porFurgo.map(f => `<li class="clic" data-ir="${f.id}"><span>${esc(nombreUb(f.id))}<span class="sub">${f.conStock} de ${f.total} materiales con stock</span></span><b class="${f.bajos ? "t-out" : "t-in"}">${f.bajos ? `${f.bajos} bajo mínimo` : "✓ al día"}</b></li>`).join("")}</ul>`
+        : `<p class="hint">No hay furgonetas.</p>`}</div>`;
+
+      // 🔴 Agotado en el Almacén
+      html += `<div class="dash-box"><h3>🔴 Agotado en el Almacén</h3>${almAgotados.length
+        ? `<ul class="dash-list">${almAgotados.slice(0, 15).map(m => `<li class="clic" data-ir="0" data-tab="reponer"><span>${esc(m.nombre)}<span class="sub">${esc(nombreCategoria(m.categoria))}</span></span><b class="t-out">0 · mín ${m.minimo}</b></li>`).join("")}</ul>${almAgotados.length > 15 ? `<p class="hint">Y ${almAgotados.length - 15} más.</p>` : ""}`
+        : `<p class="hint">Nada agotado.</p>`}</div>`;
+
+      html += `</div>`;
+
+      // 🕒 Últimos movimientos (todas las ubicaciones)
+      const ult = (inicioDatos.ultimos || []).filter(m => visibles.has(Number(m.materiales.furgo_id))).slice(0, 100);
+      html += `<div class="dash-box"><h3>🕒 Últimos movimientos <small>${ult.length >= 100 ? "los 100 últimos" : ult.length + " en total"} · baja para ver más</small></h3>${ult.length
+        ? `<ul class="dash-list dash-scroll">${ult.map(m => { const x = textoMovInicio(m); const fid = Number(m.materiales.furgo_id);
+            return `<li class="clic" data-ir="${fid}"><span>${esc(m.materiales.nombre)}<span class="sub">${fechaCortaInicio(m.fecha)} · ${esc(nombreUb(fid))} · ${esc((m.quien_email || "").split("@")[0])}</span></span><b class="mov-txt ${x.cls}">${x.txt}</b></li>`; }).join("")}</ul>`
+        : `<p class="hint">Todavía no hay movimientos.</p>`}</div>`;
+
+      const dash = document.createElement("div");
+      dash.className = "dash";
+      dash.innerHTML = html;
+      dash.querySelectorAll("[data-ir]").forEach(el => el.addEventListener("click", () => irAUbicacion(Number(el.dataset.ir), el.dataset.tab || "")));
+      dash.querySelectorAll("[data-accion]").forEach(el => el.addEventListener("click", () => {
+        if (el.dataset.accion === "almacen") irAUbicacion(0, "consumibles");
+        if (el.dataset.accion === "almacen-reponer") irAUbicacion(0, "reponer");
+      }));
+      container.innerHTML = "";
+      container.appendChild(dash);
+    }
+
     // ----- Tiempo real: lo que cambia otro técnico (o tú en otro dispositivo) aparece solo -----
     let recargaTimer = null;
     function programarRecarga() {
       clearTimeout(recargaTimer);
       recargaTimer = setTimeout(async () => {
+        if (vistaInicio) { await cargarInicio(); programarRender(); return; }
         await cargarFurgoActual();
         actualizarBadgePapelera();
         programarRender();
@@ -1994,9 +2229,9 @@
         .on("postgres_changes", { event: "*", schema: "public", table: "materiales" }, p => {
           const fila = (p.new && p.new.furgo_id !== undefined) ? p.new : p.old;
           // Un DELETE sin datos de la fila no dice de qué furgoneta era: recargamos por si acaso.
-          if (!fila || fila.furgo_id === undefined || Number(fila.furgo_id) === currentFurgoIndex) programarRecarga();
+          if (vistaInicio || !fila || fila.furgo_id === undefined || Number(fila.furgo_id) === currentFurgoIndex) programarRecarga();
         })
-        .on("postgres_changes", { event: "*", schema: "public", table: "movimientos" }, () => programarStats())
+        .on("postgres_changes", { event: "*", schema: "public", table: "movimientos" }, () => { if (vistaInicio) programarRecarga(); else programarStats(); })
         .on("postgres_changes", { event: "*", schema: "public", table: "furgonetas" }, async () => {
           await loadFurgonetas();
           renderVanTabs();
@@ -2175,6 +2410,7 @@
     }
 
     function render() {
+      if (vistaInicio) { renderInicio(); return; }
       const container = document.getElementById("itemsContainer");
       container.innerHTML = "";
 
