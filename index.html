@@ -832,6 +832,8 @@
     .dash-scroll { max-height: 560px; overflow-y: auto; padding-right: 6px; overscroll-behavior: contain; }
     .dash-scroll::-webkit-scrollbar { width: 6px; }
     .dash-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 99px; }
+    .mov-veces { display: inline-block; font-size: 0.72em; font-weight: 800; padding: 1px 7px; margin-left: 4px; border-radius: 99px;
+      background: rgba(56,189,248,0.15); color: var(--accent); border: 1px solid rgba(56,189,248,0.35); vertical-align: 1px; }
     .dash .hint { font-size: 0.75rem; color: var(--text-muted); margin: 0; }
     .mes-row { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 12px; font-size: 0.8rem; align-items: center; }
     .mes-row .h { color: var(--text-muted); font-size: 0.68rem; font-weight: 700; }
@@ -1595,6 +1597,25 @@
       if (elReponer) elReponer.textContent = lowCount;
     }
 
+    // Junta en una sola línea los toques seguidos del mismo material, mismo tipo y misma persona
+    // hechos con menos de 10 minutos entre uno y otro (p. ej. 3 toques de "+" → "Roseta ×3").
+    // La lista debe venir ordenada de más nuevo a más antiguo.
+    const MINUTOS_AGRUPAR = 10;
+    function agruparMovs(lista) {
+      const grupos = [];
+      for (const r of lista) {
+        const clave = [r.materiales.nombre, r.materiales.furgo_id, r.tipo, r.quien_email || "", !!r.ajuste, !!r.devolucion, !!r.revertido].join("|");
+        const g = grupos[grupos.length - 1];
+        const t = new Date(r.fecha).getTime();
+        if (g && g.clave === clave && (g.tUltimo - t) <= MINUTOS_AGRUPAR * 60000) {
+          g.ids.push(r.id); g.cantidad += r.cantidad; g.veces++; g.tUltimo = t;
+        } else {
+          grupos.push({ ...r, clave, ids: [r.id], veces: 1, tUltimo: t });
+        }
+      }
+      return grupos;
+    }
+
     // Muestra el registro individual de movimientos (con fecha y quién lo hizo), no solo el total.
     // Así se puede ver quién ha metido o sacado cada cosa, y revertirlo si hace falta.
     async function openMovModal(tipo) {
@@ -1618,21 +1639,21 @@
       if (!data || data.length === 0) {
         tbody.innerHTML = `<div class="mov-row-empty">Todavía no hay movimientos de este tipo en esta furgoneta/almacén.</div>`;
       } else {
-        tbody.innerHTML = data.map(r => {
+        tbody.innerHTML = agruparMovs(data).map(r => {
           const d = new Date(r.fecha);
           const fechaTxt = d.toLocaleDateString("es-ES") + " " + d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
           const cat = nombreCategoria(r.materiales.categoria);
           const accion = r.revertido
             ? `<span class="mov-reverted">↩️ Revertido por ${esc(r.revertido_por_email)}</span>`
             : (puedoEscribirEnFurgo(currentFurgoIndex)
-                ? `<button type="button" class="mov-undo-btn" onclick="revertirMovimiento(${Number(r.id)})">↩️ Revertir</button>`
+                ? `<button type="button" class="mov-undo-btn" onclick="revertirGrupo('${r.ids.map(Number).join(",")}')">↩️ Revertir${r.veces > 1 ? " ×" + r.veces : ""}</button>`
                 : '');
           const ajusteTag = (r.ajuste ? ' · <span class="mov-ajuste">✏️ ajuste a mano</span>' : '')
             + (r.devolucion ? ' · <span class="mov-devolucion">↩️ devuelto al almacén</span>' : '');
           return `
           <div class="mov-row"${r.revertido ? ' style="opacity:0.5;"' : ''}>
             <div class="mov-row-main">
-              <div class="mov-row-name">${esc(r.materiales.nombre)}</div>
+              <div class="mov-row-name">${esc(r.materiales.nombre)}${r.veces > 1 ? ` <span class="mov-veces">×${r.veces}</span>` : ""}</div>
               <div class="mov-row-meta">${fechaTxt} · ${esc(cat)} · ${esc(r.quien_email || "Sin nombre")}${ajusteTag}</div>
             </div>
             <div class="mov-row-qty ${tipo === 'entradas' ? 'mov-in-cell' : 'mov-out-cell'}">${r.cantidad}</div>
@@ -1647,6 +1668,36 @@
     // Almacén Principal lo que se descontó de allí), todo en una sola operación en Supabase.
     // El movimiento original no se borra: queda marcado con quién lo revirtió.
     let revirtiendo = false;
+
+    // Revierte una línea agrupada (varios toques seguidos) de una vez.
+    async function revertirGrupo(idsTxt) {
+      const ids = String(idsTxt).split(",").map(Number).filter(Boolean);
+      if (ids.length <= 1) return revertirMovimiento(ids[0]);
+      if (revirtiendo) return;
+      const { data: mov, error: e1 } = await supabaseClient
+        .from("movimientos").select("tipo, materiales!inner(nombre)").eq("id", ids[0]).single();
+      if (e1 || !mov) { alert("No se pudo cargar el movimiento: " + (e1 ? e1.message : "no encontrado")); return; }
+      if (!confirm(`¿Revertir los ${ids.length} movimientos de "${mov.materiales.nombre}"? Se ajustará el stock y quedará registrado quién lo revirtió.`)) return;
+
+      revirtiendo = true;
+      let hechos = 0;
+      try {
+        for (const id of ids) {
+          const { error } = await supabaseClient.rpc("revertir_movimiento", { p_mov_id: id });
+          if (error && !/ya estaba revertido/i.test(error.message)) {
+            alert(`Se revirtieron ${hechos} de ${ids.length}. El siguiente falló: ${error.message}`);
+            break;
+          }
+          hechos++;
+        }
+      } finally { revirtiendo = false; }
+
+      await cargarFurgoActual();
+      render();
+      refrescarMovStats();
+      openMovModal(mov.tipo === "entrada" ? "entradas" : "salidas");
+    }
+
     async function revertirMovimiento(movId) {
       if (revirtiendo) return;
       const { data: mov, error: e1 } = await supabaseClient
@@ -2077,7 +2128,7 @@
         supabaseClient.from("movimientos")
           .select("id, tipo, cantidad, fecha, quien_email, revertido, ajuste, devolucion, materiales!inner(nombre, furgo_id)")
           .order("fecha", { ascending: false })
-          .limit(150)
+          .limit(400)
       ]);
       if (seq !== inicioSeq) return;
       if (mat.error || mov.error || ult.error) {
@@ -2192,10 +2243,10 @@
       html += `</div>`;
 
       // 🕒 Últimos movimientos (todas las ubicaciones)
-      const ult = (inicioDatos.ultimos || []).filter(m => visibles.has(Number(m.materiales.furgo_id))).slice(0, 100);
-      html += `<div class="dash-box"><h3>🕒 Últimos movimientos <small>${ult.length >= 100 ? "los 100 últimos" : ult.length + " en total"} · baja para ver más</small></h3>${ult.length
+      const ult = agruparMovs((inicioDatos.ultimos || []).filter(m => visibles.has(Number(m.materiales.furgo_id)))).slice(0, 100);
+      html += `<div class="dash-box"><h3>🕒 Últimos movimientos <small>${ult.length >= 100 ? "los 100 últimos" : ult.length + " en total"} · los seguidos van juntos</small></h3>${ult.length
         ? `<ul class="dash-list dash-scroll">${ult.map(m => { const x = textoMovInicio(m); const fid = Number(m.materiales.furgo_id);
-            return `<li class="clic" data-ir="${fid}"><span>${esc(m.materiales.nombre)}<span class="sub">${fechaCortaInicio(m.fecha)} · ${esc(nombreUb(fid))} · ${esc((m.quien_email || "").split("@")[0])}</span></span><b class="mov-txt ${x.cls}">${x.txt}</b></li>`; }).join("")}</ul>`
+            return `<li class="clic" data-ir="${fid}"><span>${esc(m.materiales.nombre)}${m.veces > 1 ? ` <span class="mov-veces">×${m.veces}</span>` : ""}<span class="sub">${fechaCortaInicio(m.fecha)} · ${esc(nombreUb(fid))} · ${esc((m.quien_email || "").split("@")[0])}</span></span><b class="mov-txt ${x.cls}">${x.txt}</b></li>`; }).join("")}</ul>`
         : `<p class="hint">Todavía no hay movimientos.</p>`}</div>`;
 
       const dash = document.createElement("div");
