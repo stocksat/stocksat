@@ -1184,6 +1184,7 @@
     // (puede ver, no tocar) — es el valor seguro por defecto.
     let miRol = null;
     let miFurgoId = null;
+    let misFurgosExtra = []; // furgonetas en las que también puede trabajar (técnicos que cogen la que esté libre)
 
     async function cargarMiPerfil() {
       const { data: sesion } = await supabaseClient.auth.getSession();
@@ -1194,6 +1195,7 @@
       if (error || !data) { miRol = null; miFurgoId = null; return; }
       miRol = data.rol;
       miFurgoId = data.furgo_id;
+      misFurgosExtra = Array.isArray(data.furgos_extra) ? data.furgos_extra.map(Number) : [];
       miEtiqueta = (data.etiqueta || "").trim();
       pintarRol();
     }
@@ -1215,7 +1217,7 @@
     // ¿Puedo escribir (sumar/restar/añadir/borrar/editar) en esta furgoneta?
     function puedoEscribirEnFurgo(furgoId) {
       if (miRol === "responsable") return true;
-      if (miRol === "tecnico") return miFurgoId === furgoId;
+      if (miRol === "tecnico") return miFurgoId === furgoId || misFurgosExtra.includes(Number(furgoId));
       return false; // sin perfil asignado todavía: solo lectura
     }
 
@@ -1223,6 +1225,11 @@
     // ni siquiera un técnico en su propia furgoneta.
     function esResponsable() {
       return miRol === "responsable";
+    }
+
+    // ¿Ve el panel 🏠 Inicio? Responsables, y técnicos que trabajan en varias furgonetas (p. ej. Jose).
+    function veInicio() {
+      return esResponsable() || (miRol === "tecnico" && misFurgosExtra.length > 0);
     }
 
     async function onLoginOk(user) {
@@ -1238,7 +1245,7 @@
       // Sin furgoneta (p. ej. Rovira, que gestiona desde oficina): se abre el Inicio.
       if (miFurgoId !== null && miFurgoId !== undefined && vanIds.includes(Number(miFurgoId))) {
         if (Number(miFurgoId) !== currentFurgoIndex) selectFurgo(Number(miFurgoId));
-      } else if (esResponsable()) {
+      } else if (veInicio()) {
         abrirInicio();
       }
     }
@@ -1819,7 +1826,7 @@
     function renderVanTabs() {
       const bar = document.getElementById("vanTabsBar");
       if (!bar) return;
-      const conInicio = esResponsable();
+      const conInicio = veInicio();
       const pista = document.querySelector(".van-tabs-hint");
       if (pista) pista.style.display = esResponsable() ? "" : "none"; // el técnico no puede renombrar
       bar.innerHTML = "";
@@ -2093,7 +2100,7 @@
     let inicioSeq = 0;
 
     async function abrirInicio() {
-      if (!esResponsable()) return;
+      if (!veInicio()) return;
       vistaInicio = true;
       document.body.classList.add("modo-inicio");
       updateHeaderForFurgo();
